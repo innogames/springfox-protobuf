@@ -23,9 +23,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Function;
-
-import static java.util.stream.Collectors.toMap;
 
 /**
  * Jackson module that works together with com.hubspot.jackson.datatype.protobuf.ProtobufModule.
@@ -123,12 +120,17 @@ public class ProtobufPropertiesModule extends Module {
 		private Map<String, FieldDescriptor> getDescriptorForType(Class<?> type) {
 			try {
 				Descriptor invoke = (Descriptor) type.getMethod("getDescriptor").invoke(null);
-
-				return invoke.getFields().stream()
-					.collect(toMap(FieldDescriptor::getName, Function.identity()));
-
+				Map<String, FieldDescriptor> descriptorsForType = new HashMap<>();
+				invoke
+					.getFields()
+					.stream()
+					.forEach(
+						fieldDescriptor -> {
+							descriptorsForType.put(fieldDescriptor.getName(), fieldDescriptor);
+							descriptorsForType.put(fieldDescriptor.getJsonName(), fieldDescriptor);
+						});
+				return descriptorsForType;
 			} catch (Exception e) {
-
 				log.error("Error getting protobuf descriptor for swagger.", e);
 				return new HashMap<>();
 			}

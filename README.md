@@ -19,7 +19,7 @@ public class SpringFoxConfiguration implements ApplicationListener<ObjectMapperC
 	@Override
 	public void onApplicationEvent(ObjectMapperConfigured event) {
 		event.getObjectMapper().registerModule(new ProtobufModule());
-		event.getObjectMapper().registerModule(new ProtobufPropertyModule());
+		event.getObjectMapper().registerModule(new ProtobufPropertiesModule());
 	}
 	
 	/** Set up Docket for endpoints that produce protobuf. */

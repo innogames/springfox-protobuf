@@ -56,7 +56,8 @@ public class ProtobufPropertiesModule extends Module {
 			@Override
 			public VisibilityChecker<?> findAutoDetectVisibility(AnnotatedClass ac, VisibilityChecker<?> checker) {
 				if (Message.class.isAssignableFrom(ac.getRawType())) {
-					return checker.withGetterVisibility(Visibility.PUBLIC_ONLY);
+					return checker.withGetterVisibility(Visibility.PUBLIC_ONLY)
+						.withFieldVisibility(Visibility.ANY);
 				}
 				return super.findAutoDetectVisibility(ac, checker);
 			}
@@ -101,16 +102,10 @@ public class ProtobufPropertiesModule extends Module {
 			for (BeanPropertyDefinition p : baseDesc.findProperties()) {
 				String name = p.getName();
 
-				if (types.containsKey(name)) {
-					props.add(p.withSimpleName(name));
-					continue;
-				}
-
 				// special handler for Lists
-				if (name.endsWith("List") && types.containsKey(substr(name, 4))) {
-					props.add(p.withSimpleName(substr(name, 4)));
+				if (name.endsWith("_") && types.containsKey(substr(name, 1))) {
+					props.add(p.withSimpleName(substr(name, 1)));
 				}
-
 			}
 
 			return new BasicBeanDescription(cfg, type, ac, props) {};

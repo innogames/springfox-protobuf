@@ -1,11 +1,14 @@
 package com.innogames.springfox_protobuf;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
+import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonFormat.Shape;
 import com.fasterxml.jackson.core.Version;
 import com.fasterxml.jackson.core.util.VersionUtil;
 import com.fasterxml.jackson.databind.DeserializationConfig;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.Module;
+import com.fasterxml.jackson.databind.PropertyNamingStrategy.PropertyNamingStrategyBase;
 import com.fasterxml.jackson.databind.SerializationConfig;
 import com.fasterxml.jackson.databind.cfg.MapperConfig;
 import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
@@ -51,19 +54,40 @@ public class ProtobufPropertiesModule extends Module {
 
 		context.setClassIntrospector(new ProtobufClassIntrospector());
 
-		context.insertAnnotationIntrospector(new NopAnnotationIntrospector() {
-
-			@Override
-			public VisibilityChecker<?> findAutoDetectVisibility(AnnotatedClass ac, VisibilityChecker<?> checker) {
-				if (Message.class.isAssignableFrom(ac.getRawType())) {
-					return checker.withGetterVisibility(Visibility.PUBLIC_ONLY)
-						.withFieldVisibility(Visibility.ANY);
-				}
-				return super.findAutoDetectVisibility(ac, checker);
-			}
-		});
+		context.insertAnnotationIntrospector(annotationIntrospector);
 
 	}
+
+	NopAnnotationIntrospector annotationIntrospector = new NopAnnotationIntrospector() {
+
+		@Override
+		public VisibilityChecker<?> findAutoDetectVisibility(AnnotatedClass ac, VisibilityChecker<?> checker) {
+			if (Message.class.isAssignableFrom(ac.getRawType())) {
+				return checker.withGetterVisibility(Visibility.PUBLIC_ONLY)
+					.withFieldVisibility(Visibility.ANY);
+			}
+			return super.findAutoDetectVisibility(ac, checker);
+		}
+
+
+		@Override
+		public Object findNamingStrategy(AnnotatedClass ac) {
+			if (!Message.class.isAssignableFrom(ac.getRawType())) {
+				return super.findNamingStrategy(ac);
+			}
+
+			return new PropertyNamingStrategyBase() {
+				@Override
+				public String translate(String propertyName) {
+					if (propertyName.endsWith("_")) {
+						return propertyName.substring(0, propertyName.length() - 1);
+					}
+					return propertyName;
+				}
+			};
+		}
+
+	};
 
 
 	class ProtobufClassIntrospector extends BasicClassIntrospector {
@@ -92,23 +116,40 @@ public class ProtobufPropertiesModule extends Module {
 		}
 
 		private BasicBeanDescription protobufBeanDescription(MapperConfig<?> cfg, JavaType type, MixInResolver r, BasicBeanDescription baseDesc) {
-
 			Map<String, FieldDescriptor> types = cache.computeIfAbsent(type.getRawClass(), this::getDescriptorForType);
 
 			AnnotatedClass ac = AnnotatedClassResolver.resolve(cfg, type, r);
 
 			List<BeanPropertyDefinition> props = new ArrayList<>();
 
+
 			for (BeanPropertyDefinition p : baseDesc.findProperties()) {
 				String name = p.getName();
-
-				// special handler for Lists
-				if (name.endsWith("_") && types.containsKey(substr(name, 1))) {
-					props.add(p.withSimpleName(substr(name, 1)));
+				if (!types.containsKey(name)) {
+					continue;
 				}
+
+				if (p.hasField() && p.getField().getType().isJavaLangObject()
+					&& types.get(name).getType().equals(com.google.protobuf.Descriptors.FieldDescriptor.Type.STRING)) {
+					addStringFormatAnnotation(p);
+				}
+
+				props.add(p.withSimpleName(name));
 			}
 
-			return new BasicBeanDescription(cfg, type, ac, props) {};
+
+			return new BasicBeanDescription(cfg, type, ac, new ArrayList<>(props)) {};
+		}
+
+		@JsonFormat(shape = Shape.STRING)
+		class AnnotationHelper {
+
+		}
+
+		private void addStringFormatAnnotation(BeanPropertyDefinition p) {
+			JsonFormat annotation = AnnotationHelper.class.getAnnotation(JsonFormat.class);
+			p.getField().getAllAnnotations()
+				.addIfNotPresent(annotation);
 		}
 
 
@@ -129,11 +170,6 @@ public class ProtobufPropertiesModule extends Module {
 				log.error("Error getting protobuf descriptor for swagger.", e);
 				return new HashMap<>();
 			}
-		}
-
-
-		private String substr(String name, int cnt) {
-			return name.substring(0, name.length() - cnt);
 		}
 
 	}

@@ -8,20 +8,25 @@ import com.fasterxml.jackson.core.util.VersionUtil;
 import com.fasterxml.jackson.databind.DeserializationConfig;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.Module;
+import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.PropertyNamingStrategy.PropertyNamingStrategyBase;
 import com.fasterxml.jackson.databind.SerializationConfig;
 import com.fasterxml.jackson.databind.cfg.MapperConfig;
 import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
 import com.fasterxml.jackson.databind.introspect.AnnotatedClassResolver;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.BasicBeanDescription;
 import com.fasterxml.jackson.databind.introspect.BasicClassIntrospector;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.introspect.NopAnnotationIntrospector;
+import com.fasterxml.jackson.databind.introspect.POJOPropertyBuilder;
 import com.fasterxml.jackson.databind.introspect.VisibilityChecker;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -97,7 +102,7 @@ public class ProtobufPropertiesModule extends Module {
 			BasicBeanDescription desc = super.forDeserialization(cfg, type, r);
 
 			if (Message.class.isAssignableFrom(type.getRawClass())) {
-				return protobufBeanDescription(cfg, type, r, desc);
+				return protobufBeanDescription(cfg, type, r, desc, false);
 			}
 
 			return desc;
@@ -109,13 +114,14 @@ public class ProtobufPropertiesModule extends Module {
 			BasicBeanDescription desc = super.forSerialization(cfg, type, r);
 
 			if (Message.class.isAssignableFrom(type.getRawClass())) {
-				return protobufBeanDescription(cfg, type, r, desc);
+				return protobufBeanDescription(cfg, type, r, desc, true);
 			}
 
 			return desc;
 		}
 
-		private BasicBeanDescription protobufBeanDescription(MapperConfig<?> cfg, JavaType type, MixInResolver r, BasicBeanDescription baseDesc) {
+		private BasicBeanDescription protobufBeanDescription(MapperConfig<?> cfg, JavaType type, MixInResolver r, BasicBeanDescription baseDesc,
+			boolean forSerialization) {
 			Map<String, FieldDescriptor> types = cache.computeIfAbsent(type.getRawClass(), this::getDescriptorForType);
 
 			AnnotatedClass ac = AnnotatedClassResolver.resolve(cfg, type, r);
@@ -123,7 +129,8 @@ public class ProtobufPropertiesModule extends Module {
 			List<BeanPropertyDefinition> props = new ArrayList<>();
 
 
-			for (BeanPropertyDefinition p : baseDesc.findProperties()) {
+			List<BeanPropertyDefinition> properties = baseDesc.findProperties();
+			for (BeanPropertyDefinition p : properties) {
 				String name = p.getName();
 				if (!types.containsKey(name)) {
 					continue;
@@ -132,6 +139,37 @@ public class ProtobufPropertiesModule extends Module {
 				if (p.hasField() && p.getField().getType().isJavaLangObject()
 					&& types.get(name).getType().equals(com.google.protobuf.Descriptors.FieldDescriptor.Type.STRING)) {
 					addStringFormatAnnotation(p);
+				}
+
+				if (p.hasField() && p.getField().getType().hasContentType() && p.getField().getType().getContentType().isTypeOrSubTypeOf(Integer.class)) {
+					if (types.get(name).getJavaType() == FieldDescriptor.JavaType.ENUM) {
+						// addStringFormatAnnotation(p);
+
+						PropertyName propName = new PropertyName(name);
+
+						POJOPropertyBuilder propBuilder = new POJOPropertyBuilder(cfg, cfg.getAnnotationIntrospector(), forSerialization, propName);
+						Method[] methods = type.getRawClass().getDeclaredMethods();
+						System.err.println(type.getRawClass());
+						System.err.println(type.getGenericSignature());
+						Method getter = Arrays.stream(methods).filter(m -> m.getName().equalsIgnoreCase("get" + name + "List")).findAny().orElseThrow();
+
+						Method toBuilder = Arrays.stream(methods).filter(m -> m.getName().equalsIgnoreCase("newBuilder")).findAny().orElseThrow();
+						Class<?> builder = toBuilder.getReturnType();
+						System.err.println(builder);
+						Method[] builderMethods = builder.getDeclaredMethods();
+						System.err.println(Arrays.toString(builderMethods));
+						Method setter = Arrays.stream(builderMethods).filter(m -> m.getName().equalsIgnoreCase("addAll" + name)).findAny().orElseThrow();
+
+						if (forSerialization) {
+							propBuilder.addGetter(new AnnotatedMethod(null, getter, null, null), propName, true, true, false);
+						} else {
+							propBuilder.addSetter(new AnnotatedMethod(null, setter, null, null), propName, true, true, false);
+						}
+
+						props.add(propBuilder);
+
+						continue;
+					}
 				}
 
 				props.add(p.withSimpleName(name));
